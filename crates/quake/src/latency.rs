@@ -412,6 +412,7 @@ fn assign_regions(
             node_regions.insert(name.clone(), region);
         }
     }
+    
 
     Ok(node_regions)
 }
