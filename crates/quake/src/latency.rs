@@ -53,7 +53,7 @@ pub enum Region {
     #[serde(rename = "ap-southeast-1")]
     #[strum(serialize = "ap-southeast-1")]
     ApSoutheast1 = 3,
-    /// Sydney, Australia
+    /// Sydney
     #[serde(rename = "ap-southeast-2")]
     #[strum(serialize = "ap-southeast-2")]
     ApSoutheast2 = 4,
@@ -149,7 +149,7 @@ pub(crate) const AWS_LATENCY_MATRIX: [[u32; 14]; 14] = [
 /*us-e-1 */  [ 76,     93,     95,    109,    101,    10,    48,    36,    40,    58,     0,    10,    35,    34], // us-east-1 (N. Virginia)
 /*us-e-2 */  [ 70,     86,    100,    103,     94,    15,    52,    41,    45,    63,    10,     0,    29,    27], // us-east-2 (Ohio)
 /*us-w-1 */  [ 56,     70,    118,     88,     70,    41,    78,    67,    75,    88,    35,    29,     0,    12], // us-west-1 (N. California)
-/*us-w-2 */  [ 51,     65,    112,     83,     71,    32,    73,    61,    66,    89,    34,    27,    12,     0], // us-west-2 (Oregon)
+/*us-w-2*/  [ 51,     65,    112,     83,     71,    32,    73,    61,    66,    89,    34,    27,    12,     0], // us-west-2 (Oregon)
 ];
 
 /// Generate bash script content for network latency emulation using tc
@@ -174,7 +174,7 @@ fn generate_tc_script(
 
     // WSL2's kernel does not provide the qdisc modules used by tc/netem in this setup.
     // Skip latency emulation there so localdev can still start without manual script edits.
-    script.push_str("if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then\n");
+    script.push_str("if grep -qi microsoft-standard /proc/sys/kernel/osrelease 2>/dev/null; then\n");
     script.push_str("  echo \"WSL2 detected; skipping latency emulation because required tc qdisc modules are unavailable.\"\n");
     script.push_str("  exit 0\n");
     script.push_str("fi\n\n");
@@ -412,7 +412,6 @@ fn assign_regions(
             node_regions.insert(name.clone(), region);
         }
     }
-    
 
     Ok(node_regions)
 }
