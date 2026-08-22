@@ -100,7 +100,8 @@ impl PartitionMode {
             (n + d / 2) / d
         }
 
-        if round_div(num_accounts, 1 << (num_generators - 1)) == 0 {
+        let shift = num_generators - 1;
+        if shift >= usize::BITS as usize || round_div(num_accounts, 1usize << shift) == 0 {
             eyre::bail!("too many generators: it would result in a bucket with size 0");
         }
 
@@ -185,6 +186,13 @@ mod tests {
                 PartitionMode::Exponential.partition_accounts(num_accounts, num_generators);
             assert_eq!(ranges.ok(), expected);
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn partition_accounts_exponential_rejects_shift_overflow() -> Result<()> {
+        let result = PartitionMode::Exponential.partition_accounts(130, 65);
+        assert!(result.is_err(), "expected graceful error, got {result:?}");
         Ok(())
     }
 }
