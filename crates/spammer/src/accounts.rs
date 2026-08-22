@@ -100,7 +100,8 @@ impl PartitionMode {
             (n + d / 2) / d
         }
 
-        if round_div(num_accounts, 1 << (num_generators - 1)) == 0 {
+        let shift = num_generators - 1;
+        if shift >= usize::BITS as usize || round_div(num_accounts, 1usize << shift) == 0 {
             eyre::bail!("too many generators: it would result in a bucket with size 0");
         }
 
@@ -179,6 +180,7 @@ mod tests {
             (100, 5, Some(vec![(0, 6), (6, 13), (13, 25), (25, 50), (50, 100)])),
             (100, 8, Some(vec![(0, 1), (1, 2), (2, 3), (3, 6), (6, 13), (13, 25), (25, 50), (50, 100)])),
             (100, 9, None),
+            (130, 65, None),
         ];
         for (num_accounts, num_generators, expected) in test_cases {
             let ranges =
