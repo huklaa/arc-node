@@ -41,6 +41,11 @@ fn add_background_full_nodes(builder: &mut TestBuilder<()>, n: usize, height: u6
             .full_node()
             .start()
             .wait_until_block(height)
+            // Full nodes do not provide consensus/sync support to the validators.
+            // Shut them down as soon as their lower target is reached so the
+            // multi-node scenario does not retain their CL+EL stacks until the
+            // slower validator tasks complete.
+            .crash(Layer::Both)
             .success();
     }
 }
