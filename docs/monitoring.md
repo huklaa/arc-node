@@ -276,13 +276,22 @@ Also confirm that the SSH tunnel is still running.
 
 ### Prometheus is restarting with a permissions error
 
-If Prometheus logs include an error about `queries.active` or write permission
-under `/prometheus`, fix the ownership of the local data directory:
+The Compose example above runs Prometheus as container root with `user: "0"`,
+so a normal rootful Docker setup should not require changing ownership of the
+bind-mounted `prometheus-data` directory.
+
+If you intentionally remove `user: "0"` so Prometheus runs as the image's
+default non-root user, make the data directory writable by that user before
+restarting Prometheus:
 
 ```sh
 sudo chown -R 65534:65534 "$ARC_MONITORING"/prometheus-data
 docker compose restart prometheus
 ```
+
+If a permissions error still occurs while using `user: "0"`, changing the
+directory owner to UID 65534 is not the appropriate fix. Check the host's Docker
+user-namespace, SELinux, or bind-mount configuration instead.
 
 ### Grafana is healthy but dashboards show no data
 
