@@ -54,27 +54,81 @@ impl ApiVersion {
     /// Supported formats:
     /// - `application/vnd.arc.v1+json` -> V1
     /// - `application/json` -> default (V1)
+    /// - `*/*` -> default (V1)
+    /// - comma-separated media ranges and media-type parameters are supported
+    /// - ranges with `q=0` or malformed quality values are ignored
     /// - Missing/empty -> default (V1)
     ///
-    /// Returns `None` if the header specifies an unsupported version or the
-    /// format is unrecognized/malformed (e.g. "text/html")
+    /// Returns `None` if no acceptable media range specifies a supported
+    /// representation.
     pub fn from_accept_header(value: &str) -> Option<Self> {
-        let trimmed = value.trim();
-
-        // Empty or generic JSON defaults to V1
-        if trimmed.is_empty() || trimmed == MEDIA_TYPE_JSON || trimmed == MEDIA_TYPE_ANY {
+        if value.trim().is_empty() {
             return Some(Self::default());
         }
 
-        // Parse versioned media type
-        if let Some(version_part) = trimmed.strip_prefix(MEDIA_TYPE_PREFIX) {
-            if let Some(version_str) = version_part.strip_suffix("+json") {
-                return ApiVersion::from_str(version_str).ok();
+        for range in value.split(',') {
+            let mut parts = range.split(';');
+            let media_type = parts.next()?.trim();
+            if media_type.is_empty() {
+                continue;
+            }
+
+            let mut acceptable = true;
+            for parameter in parts {
+                let Some((name, value)) = parameter.trim().split_once('=') else {
+                    continue;
+                };
+
+                if name.trim().eq_ignore_ascii_case("q")
+                    && !is_acceptable_quality(value.trim())
+                {
+                    acceptable = false;
+                    break;
+                }
+            }
+
+            if !acceptable {
+                continue;
+            }
+
+            if media_type == MEDIA_TYPE_JSON || media_type == MEDIA_TYPE_ANY {
+                return Some(Self::default());
+            }
+
+            if let Some(version_part) = media_type.strip_prefix(MEDIA_TYPE_PREFIX) {
+                if let Some(version_str) = version_part.strip_suffix("+json") {
+                    if let Ok(version) = ApiVersion::from_str(version_str) {
+                        return Some(version);
+                    }
+                }
             }
         }
 
-        // Unrecognized/malformed format defaults to None
         None
+    }
+}
+
+/// Validates an HTTP qvalue and returns whether it makes the media range
+/// acceptable. RFC 9110 allows values from 0 through 1 with at most three
+/// fractional digits; only zero means "not acceptable".
+fn is_acceptable_quality(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+
+    if parts.next().is_some() {
+        return false;
+    }
+
+    let fraction = fraction.unwrap_or("");
+    if fraction.len() > 3 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+
+    match whole {
+        "0" => fraction.bytes().any(|byte| byte != b'0'),
+        "1" => fraction.bytes().all(|byte| byte == b'0'),
+        _ => false,
     }
 }
 
@@ -152,6 +206,63 @@ mod tests {
     fn test_from_accept_header_empty() {
         assert_eq!(ApiVersion::from_accept_header(""), Some(ApiVersion::V1));
         assert_eq!(ApiVersion::from_accept_header("  "), Some(ApiVersion::V1));
+    }
+
+    #[test]
+    fn test_from_accept_header_parameters() {
+        assert_eq!(
+            ApiVersion::from_accept_header("application/vnd.arc.v1+json; q=0.9"),
+            Some(ApiVersion::V1)
+        );
+        assert_eq!(
+            ApiVersion::from_accept_header("application/json; charset=utf-8; q=0.5"),
+            Some(ApiVersion::V1)
+        );
+    }
+
+    #[test]
+    fn test_from_accept_header_multiple_ranges() {
+        assert_eq!(
+            ApiVersion::from_accept_header("text/html, application/vnd.arc.v1+json"),
+            Some(ApiVersion::V1)
+        );
+        assert_eq!(
+            ApiVersion::from_accept_header("application/vnd.arc.v99+json, */*"),
+            Some(ApiVersion::V1)
+        );
+    }
+
+    #[test]
+    fn test_from_accept_header_zero_quality_is_ignored() {
+        assert_eq!(
+            ApiVersion::from_accept_header("application/vnd.arc.v1+json; q=0"),
+            None
+        );
+        assert_eq!(
+            ApiVersion::from_accept_header(
+                "application/vnd.arc.v1+json; q=0, application/json; q=0.5"
+            ),
+            Some(ApiVersion::V1)
+        );
+    }
+
+    #[test]
+    fn test_from_accept_header_invalid_quality_is_ignored() {
+        for quality in ["nope", "NaN", "1.1", "0.1234"] {
+            assert_eq!(
+                ApiVersion::from_accept_header(&format!(
+                    "application/vnd.arc.v1+json; q={quality}"
+                )),
+                None
+            );
+        }
+
+        assert_eq!(
+            ApiVersion::from_accept_header(
+                "application/vnd.arc.v1+json; q=nope, application/json"
+            ),
+            Some(ApiVersion::V1)
+        );
     }
 
     #[test]
