@@ -75,6 +75,10 @@ impl RemoteSigningConfig {
             return Err("TLS enabled but no certificate path provided".to_string());
         }
 
+        self.retry_config
+            .validate()
+            .map_err(|e| format!("Invalid retry configuration: {e}"))?;
+
         Ok(())
     }
 }
@@ -202,5 +206,56 @@ mod tests {
             ..Default::default()
         };
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_valid_custom_retry_config() {
+        let retry_config = RetryConfig::new(
+            5,
+            Duration::from_millis(250),
+            Duration::from_secs(3),
+        )
+        .with_backoff_multiplier(1.5);
+        let config = RemoteSigningConfig::default().with_retry_config(retry_config);
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_remote_config_rejects_invalid_retry_backoff_order() {
+        let retry_config = RetryConfig::new(
+            3,
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+        );
+        let config = RemoteSigningConfig::default().with_retry_config(retry_config);
+
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("Invalid retry configuration"));
+        assert!(error.contains("initial_backoff must be less than max_backoff"));
+    }
+
+    #[test]
+    fn test_remote_config_rejects_equal_retry_backoff_bounds() {
+        let retry_config = RetryConfig::new(
+            3,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        );
+        let config = RemoteSigningConfig::default().with_retry_config(retry_config);
+
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("Invalid retry configuration"));
+        assert!(error.contains("initial_backoff must be less than max_backoff"));
+    }
+
+    #[test]
+    fn test_remote_config_rejects_invalid_retry_multiplier() {
+        let retry_config = RetryConfig::default().with_backoff_multiplier(0.5);
+        let config = RemoteSigningConfig::default().with_retry_config(retry_config);
+
+        let error = config.validate().unwrap_err();
+        assert!(error.contains("Invalid retry configuration"));
+        assert!(error.contains("backoff_multiplier must be at least 1.0"));
     }
 }
