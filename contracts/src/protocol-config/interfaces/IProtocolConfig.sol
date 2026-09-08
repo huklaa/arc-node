@@ -25,7 +25,7 @@ interface IProtocolConfig {
         uint64 alpha;
         uint64 kRate;
         uint64 inverseElasticityMultiplier; // target gas limit in basis points (e.g., 5000 for 50.00%, range: 0-10000)
-        uint256 minBaseFee;
+        uint256 minBaseFee; // must be >= floor((10000 - 1) / kRate) when kRate is non-zero
         uint256 maxBaseFee;
         uint256 blockGasLimit;
     }

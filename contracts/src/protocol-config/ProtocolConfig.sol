@@ -40,6 +40,9 @@ contract ProtocolConfig is Controller, Pausable, IProtocolConfig {
     /// @notice Thrown when minBaseFee is greater than maxBaseFee
     error InvalidBaseFeeRange();
 
+    /// @notice Thrown when minBaseFee is below the fee curve's integer-decay floor
+    error InvalidMinBaseFee();
+
     /// @notice Thrown when blockGasLimit is zero
     error InvalidBlockGasLimit();
 
@@ -80,6 +83,8 @@ contract ProtocolConfig is Controller, Pausable, IProtocolConfig {
     // keccak256(abi.encode(uint256(keccak256("arc.storage.ProtocolConfig")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant PROTOCOL_CONFIG_STORAGE_LOCATION =
         0x668f09ce856848ead6cb1ddee963f15ef833cea8958030868f867aec84385200;
+
+    uint256 private constant BASE_FEE_FIXED_POINT_SCALE = 10000;
 
     /**
      * @dev Returns the storage pointer for ProtocolConfig state
@@ -138,6 +143,11 @@ contract ProtocolConfig is Controller, Pausable, IProtocolConfig {
         require(newParams.alpha <= 100, InvalidAlpha());
         require(newParams.kRate <= 10000, InvalidKRate());
         require(newParams.minBaseFee <= newParams.maxBaseFee, InvalidBaseFeeRange());
+        if (newParams.kRate != 0) {
+            // Below this value integer division makes the decay zero before minBaseFee is reached.
+            uint256 integerDecayFloor = (BASE_FEE_FIXED_POINT_SCALE - 1) / newParams.kRate;
+            require(newParams.minBaseFee >= integerDecayFloor, InvalidMinBaseFee());
+        }
         require(newParams.blockGasLimit > 0, InvalidBlockGasLimit());
         require(newParams.inverseElasticityMultiplier <= 10000, InvalidInverseElasticityMultiplier());
 

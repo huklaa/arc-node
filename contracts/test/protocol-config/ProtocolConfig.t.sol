@@ -585,6 +585,42 @@ contract ProtocolConfigTest is Test {
         protocolConfig.updateFeeParams(invalidParams);
     }
 
+    function test_updateFeeParams__MinBaseFeeBelowIntegerDecayFloor() public {
+        protocolConfig = deployProtocolConfig(owner, controller, pauser);
+
+        IProtocolConfig.FeeParams memory invalidParams = IProtocolConfig.FeeParams({
+            alpha: 50,
+            kRate: 1250,
+            inverseElasticityMultiplier: 5000,
+            minBaseFee: 6,
+            maxBaseFee: 2000,
+            blockGasLimit: 30000000
+        });
+
+        vm.prank(controller);
+        vm.expectRevert(ProtocolConfig.InvalidMinBaseFee.selector);
+        protocolConfig.updateFeeParams(invalidParams);
+    }
+
+    function test_updateFeeParams__MinBaseFeeAtIntegerDecayFloor() public {
+        protocolConfig = deployProtocolConfig(owner, controller, pauser);
+
+        IProtocolConfig.FeeParams memory validParams = IProtocolConfig.FeeParams({
+            alpha: 50,
+            kRate: 1250,
+            inverseElasticityMultiplier: 5000,
+            minBaseFee: 7,
+            maxBaseFee: 2000,
+            blockGasLimit: 30000000
+        });
+
+        vm.prank(controller);
+        protocolConfig.updateFeeParams(validParams);
+
+        IProtocolConfig.FeeParams memory updatedParams = protocolConfig.feeParams();
+        assertEq(updatedParams.minBaseFee, 7);
+    }
+
     function test_updateFeeParams__InvalidBlockGasLimit() public {
         // Deploy contract
         protocolConfig = deployProtocolConfig(owner, controller, pauser);
