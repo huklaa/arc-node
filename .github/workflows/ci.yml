@@ -177,6 +177,7 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      # hardhat-foundry invokes forge while loading the Hardhat config, even with --no-compile.
       - name: Read Foundry version
         id: foundry-version
         run: echo "version=$(cat .foundry-version)" >> $GITHUB_OUTPUT
