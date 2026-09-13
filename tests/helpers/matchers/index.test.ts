@@ -55,6 +55,10 @@ describe('matchers', () => {
   })
 
   describe('hexEqual', () => {
+    it('supports skipping the comparison', () => {
+      expect('0x1234').to.be.hexEqual(skipCompare)
+    })
+
     it('should support hexEqual case insensitive', () => {
       expect('0x1234').to.be.hexEqual('0x1234')
       expect('0x1234').to.not.be.hexEqual('0x1235')
