@@ -62,6 +62,11 @@ describe('matchers', () => {
       expect('0xAE').to.be.hexEqual('0xae')
     })
 
+    it('should skip comparison when expected is skipCompare', () => {
+      expect('0x1234').to.be.hexEqual(skipCompare)
+      expect('0x1234').to.not.be.hexEqual(skipCompare)
+    })
+
     it('always fail if the value is not a hex string', () => {
       expect(() => expect(1n).to.be.hexEqual('0x3')).to.throw(AssertionError, '"1" is not a valid hex string')
       expect(() => expect(1n).to.not.be.hexEqual('0x3')).to.throw(AssertionError, '"1" is not a valid hex string')
