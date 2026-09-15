@@ -23,6 +23,13 @@ use arc_consensus_types::{Address, Height, ProposalParts, Round};
 
 use arc_consensus_types::block::ConsensusBlock;
 
+/// Maximum number of full invalid payload records retained for one height.
+///
+/// Invalid payloads are diagnostic data. Bounding the collection prevents a
+/// peer from making the per-height record grow without limit and keeps the
+/// read-modify-write cost of appending bounded.
+pub(crate) const MAX_INVALID_PAYLOADS_PER_HEIGHT: usize = 64;
+
 /// Invalid payloads collected during a height.
 /// Stored in the database.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,9 +47,16 @@ impl StoredInvalidPayloads {
         }
     }
 
-    /// Appends an invalid payload to this collection.
+    /// Returns whether the per-height retention cap has been reached.
+    pub(crate) fn is_at_capacity(&self) -> bool {
+        self.payloads.len() >= MAX_INVALID_PAYLOADS_PER_HEIGHT
+    }
+
+    /// Appends an invalid payload while capacity remains.
     pub fn add_invalid_payload(&mut self, payload: InvalidPayload) {
-        self.payloads.push(payload);
+        if !self.is_at_capacity() {
+            self.payloads.push(payload);
+        }
     }
 }
 
