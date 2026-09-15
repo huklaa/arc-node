@@ -63,20 +63,21 @@ where
     /// Runs the rebroadcast loop until the task is cancelled.
     pub async fn run(self) {
         let mut interval = tokio::time::interval(self.interval);
+        let mut next_offset = 0;
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
 
         loop {
             interval.tick().await;
-            self.rebroadcast_pending();
+            next_offset = self.rebroadcast_pending(next_offset);
         }
     }
 
-    fn rebroadcast_pending(&self) {
-        let txs = collect_pending_txs(&self.pool);
+    fn rebroadcast_pending(&self, offset: usize) -> usize {
+        let (txs, next_offset) = collect_pending_txs(&self.pool, offset);
 
         if txs.is_empty() {
-            return;
+            return 0;
         }
 
         let count = txs.len();
@@ -90,20 +91,40 @@ where
             count,
             "Broadcast pending transactions (Forced mode)"
         );
+
+        next_offset
     }
 }
 
 /// Collects up to [`MAX_REBROADCAST`] consensus-format transactions from the pending set.
 ///
-/// When the pool exceeds `MAX_REBROADCAST`, only the first `MAX_REBROADCAST` transactions
-/// by internal pool ordering (sender-id, then nonce) are broadcast.
+/// The returned offset advances through the internal pool ordering so successive rounds cover
+/// transactions beyond the first [`MAX_REBROADCAST`] entries.
 pub(crate) fn collect_pending_txs<Pool: TransactionPool>(
     pool: &Pool,
-) -> Vec<<Pool::Transaction as PoolTransaction>::Consensus> {
-    pool.pending_transactions_max(MAX_REBROADCAST)
-        .into_iter()
+    offset: usize,
+) -> (
+    Vec<<Pool::Transaction as PoolTransaction>::Consensus>,
+    usize,
+) {
+    let pending = pool.pending_transactions();
+    let pending_len = pending.len();
+
+    if pending_len == 0 {
+        return (Vec::new(), 0);
+    }
+
+    let offset = offset % pending_len;
+    let count = pending_len.min(MAX_REBROADCAST);
+    let txs = pending
+        .iter()
+        .cycle()
+        .skip(offset)
+        .take(count)
         .map(|tx| tx.transaction.clone_into_consensus().into_inner())
-        .collect()
+        .collect();
+
+    (txs, (offset + count) % pending_len)
 }
 
 #[cfg(test)]
@@ -156,8 +177,9 @@ mod tests {
     fn collect_pending_txs_empty_pool() {
         let provider = MockEthProvider::default();
         let pool = create_test_pool(&provider);
-        let txs = collect_pending_txs(&pool);
+        let (txs, next_offset) = collect_pending_txs(&pool, 0);
         assert!(txs.is_empty());
+        assert_eq!(next_offset, 0);
     }
 
     #[tokio::test]
@@ -169,9 +191,10 @@ mod tests {
         let expected_hash = *tx.hash();
         pool.add_external_transaction(tx).await.unwrap();
 
-        let txs = collect_pending_txs(&pool);
+        let (txs, next_offset) = collect_pending_txs(&pool, 0);
         assert_eq!(txs.len(), 1);
         assert_eq!(*txs[0].tx_hash(), expected_hash);
+        assert_eq!(next_offset, 0);
     }
 
     #[tokio::test]
@@ -190,8 +213,9 @@ mod tests {
         pool.add_external_transaction(tx1).await.unwrap();
         pool.add_external_transaction(tx2).await.unwrap();
 
-        let txs = collect_pending_txs(&pool);
+        let (txs, next_offset) = collect_pending_txs(&pool, 0);
         assert_eq!(txs.len(), 2);
+        assert_eq!(next_offset, 0);
     }
 
     #[tokio::test]
@@ -205,7 +229,20 @@ mod tests {
             pool.add_external_transaction(tx).await.unwrap();
         }
 
-        let collected = collect_pending_txs(&pool);
+        let (collected, next_offset) = collect_pending_txs(&pool, 0);
         assert_eq!(collected.len(), MAX_REBROADCAST);
+        assert_eq!(next_offset, MAX_REBROADCAST);
+
+        let (next_collected, _) = collect_pending_txs(&pool, next_offset);
+        let first_hashes = collected
+            .iter()
+            .map(|tx| *tx.tx_hash())
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            next_collected
+                .iter()
+                .any(|tx| !first_hashes.contains(tx.tx_hash())),
+            "the next round must advance beyond the first MAX_REBROADCAST transactions"
+        );
     }
 }
