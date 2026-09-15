@@ -807,6 +807,9 @@ impl Db {
             }
         };
 
+        if stored.is_at_capacity() {
+            return Ok(());
+        }
         stored.add_invalid_payload(invalid_payload);
         let encoded = encode_invalid_payloads(&stored)?;
         let write_bytes = encoded.len();
@@ -2928,6 +2931,37 @@ mod tests {
             "test",
         );
         store.append_invalid_payload(payload).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_append_invalid_payload_caps_records_per_height() {
+        use crate::invalid_payloads::MAX_INVALID_PAYLOADS_PER_HEIGHT;
+
+        let store = create_store().await;
+        let height = Height::new(1);
+        store_block_at_height(&store, height).await;
+
+        for i in 0..=MAX_INVALID_PAYLOADS_PER_HEIGHT {
+            let payload = InvalidPayload::new_without_payload(
+                height,
+                Round::new(0),
+                Address::new([0u8; 20]),
+                &format!("invalid payload {i}"),
+            );
+            store.append_invalid_payload(payload).await.unwrap();
+        }
+
+        let stored = store
+            .get_invalid_payloads(Some(height))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.payloads.len(), MAX_INVALID_PAYLOADS_PER_HEIGHT);
+        assert_eq!(stored.payloads[0].reason, "invalid payload 0");
+        assert_eq!(
+            stored.payloads[MAX_INVALID_PAYLOADS_PER_HEIGHT - 1].reason,
+            format!("invalid payload {}", MAX_INVALID_PAYLOADS_PER_HEIGHT - 1)
+        );
     }
 
     #[tokio::test]
