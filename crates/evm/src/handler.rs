@@ -93,7 +93,12 @@ where
         let beneficiary = ctx.block().beneficiary();
         let basefee = ctx.block().basefee() as u128;
         let effective_gas_price = ctx.tx().effective_gas_price(basefee);
-        let gas_used = exec_result.gas().used();
+        // EIP-8037 reservoir gas is unused and reimbursed to the caller, so it must not also be
+        // paid to the beneficiary. This mirrors revm's post-execution reward calculation.
+        let gas_used = exec_result
+            .gas()
+            .used()
+            .saturating_sub(exec_result.gas().reservoir());
 
         // u128 * u64 fits in U256 (max 192 bits).
         #[allow(clippy::arithmetic_side_effects)]
@@ -256,6 +261,58 @@ mod tests {
         assert_eq!(
             balance_increase, expected_fee,
             "Beneficiary should receive the full transaction fee (base fee + priority fee)"
+        );
+    }
+
+    #[test]
+    fn test_reward_beneficiary_excludes_eip8037_reservoir() {
+        let beneficiary = address!("3100000000000000000000000000000000000003");
+        let caller = address!("4100000000000000000000000000000000000004");
+        let gas_price = 10u128;
+        let gas_used = 30_000u64;
+        let reservoir = 9_000u64;
+
+        let db: CacheDB<EmptyDBTyped<Infallible>> = CacheDB::new(EmptyDB::default());
+        let mut evm = Context::mainnet().with_db(db).build_mainnet();
+        evm.block.beneficiary = beneficiary;
+        evm.block.basefee = 7;
+        evm.tx.caller = caller;
+        evm.tx.gas_price = gas_price;
+        evm.tx.gas_priority_fee = Some(3);
+
+        let interpreter_result = InterpreterResult::new(
+            InstructionResult::Return,
+            alloy_primitives::Bytes::new(),
+            Gas::new_spent_with_reservoir(gas_used, reservoir),
+        );
+        let call_outcome = CallOutcome::new(interpreter_result, 0..0);
+        let mut exec_result = FrameResult::Call(call_outcome);
+
+        let initial_balance = evm
+            .journaled_state
+            .load_account(beneficiary)
+            .unwrap()
+            .info
+            .balance;
+
+        let handler: ArcEvmHandler<_, EVMError<Infallible>> =
+            ArcEvmHandler::new(ArcHardforkFlags::default());
+        handler
+            .reward_beneficiary(&mut evm, &mut exec_result)
+            .expect("reward_beneficiary should succeed");
+
+        let final_balance = evm
+            .journaled_state
+            .load_account(beneficiary)
+            .unwrap()
+            .info
+            .balance;
+        let expected_fee = U256::from(gas_price) * U256::from(gas_used - reservoir);
+
+        assert_eq!(
+            final_balance - initial_balance,
+            expected_fee,
+            "reservoir gas reimbursed to the caller must not be paid to the beneficiary"
         );
     }
 
