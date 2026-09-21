@@ -16,7 +16,7 @@
 
 use std::time::{Duration, Instant};
 
-use redb::{ReadableTable, TableDefinition};
+use redb::{ReadableTable, TableDefinition, TableError};
 use tracing::{debug, info, warn};
 
 use crate::versions::SchemaVersion;
@@ -304,13 +304,20 @@ impl MigrationCoordinator {
         let mut stats = MigrationStats::default();
 
         // start from the min height
-        let mut next_height = if let Some((min_height, _)) = self
-            .db
-            .begin_read()?
-            .open_table(CERTIFICATES_TABLE)?
-            .first()?
-        {
-            min_height.value()
+        let min_height = {
+            let read_tx = self.db.begin_read()?;
+            let table = match read_tx.open_table(CERTIFICATES_TABLE) {
+                Ok(table) => table,
+                Err(TableError::TableDoesNotExist(_)) => {
+                    stats.tables_migrated += 1;
+                    return Ok(stats);
+                }
+                Err(err) => return Err(err.into()),
+            };
+            table.first()?.map(|(height, _)| height.value())
+        };
+        let mut next_height = if let Some(min_height) = min_height {
+            min_height
         } else {
             stats.tables_migrated += 1;
             return Ok(stats);
@@ -396,13 +403,20 @@ impl MigrationCoordinator {
         let mut stats = MigrationStats::default();
 
         // start from the min height
-        let mut next_height = if let Some((min_height, _)) = self
-            .db
-            .begin_read()?
-            .open_table(DECIDED_BLOCKS_TABLE)?
-            .first()?
-        {
-            min_height.value()
+        let min_height = {
+            let read_tx = self.db.begin_read()?;
+            let table = match read_tx.open_table(DECIDED_BLOCKS_TABLE) {
+                Ok(table) => table,
+                Err(TableError::TableDoesNotExist(_)) => {
+                    stats.tables_migrated += 1;
+                    return Ok(stats);
+                }
+                Err(err) => return Err(err.into()),
+            };
+            table.first()?.map(|(height, _)| height.value())
+        };
+        let mut next_height = if let Some(min_height) = min_height {
+            min_height
         } else {
             stats.tables_migrated += 1;
             return Ok(stats);
@@ -713,6 +727,37 @@ mod tests {
         );
 
         // Version should be set to current
+        assert_eq!(
+            coordinator.current_schema_version().unwrap(),
+            Some(DB_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn test_migration_treats_missing_data_tables_as_empty() {
+        let (db, _path) = create_test_db();
+        let coordinator = MigrationCoordinator::new(db);
+
+        // Model an interrupted first start: the database file and metadata table exist,
+        // but none of the consensus data tables have been created yet.
+        assert!(coordinator.needs_migration(true).unwrap());
+        assert_eq!(
+            coordinator.current_schema_version().unwrap(),
+            Some(SchemaVersion::V0)
+        );
+
+        let preview = coordinator.preview_migrate().unwrap();
+        assert_eq!(preview.tables_migrated, 4);
+        assert_eq!(preview.records_scanned, 0);
+        assert_eq!(
+            coordinator.current_schema_version().unwrap(),
+            Some(SchemaVersion::V0),
+            "a dry run must not advance the schema version"
+        );
+
+        let stats = coordinator.migrate().unwrap();
+        assert_eq!(stats.tables_migrated, 4);
+        assert_eq!(stats.records_scanned, 0);
         assert_eq!(
             coordinator.current_schema_version().unwrap(),
             Some(DB_SCHEMA_VERSION)
