@@ -365,6 +365,28 @@ fn exceeds_block_gas_limit_permanently(tx_gas_limit: u64, block_gas_limit: u64) 
     tx_gas_limit > block_gas_limit
 }
 
+/// Returns whether adding `tx_gas_limit` keeps the builder's local gas accounting within the
+/// block limit. Arithmetic overflow is treated as a transaction that cannot fit this block.
+fn fits_within_block_gas_limit(
+    cumulative_gas_used: u64,
+    tx_gas_limit: u64,
+    block_gas_limit: u64,
+) -> bool {
+    cumulative_gas_used
+        .checked_add(tx_gas_limit)
+        .is_some_and(|total| total <= block_gas_limit)
+}
+
+/// Adds executed gas to the builder's cumulative accounting without allowing a panic.
+fn checked_cumulative_gas_used(
+    cumulative_gas_used: u64,
+    gas_used: u64,
+) -> Result<u64, PayloadBuilderError> {
+    cumulative_gas_used.checked_add(gas_used).ok_or_else(|| {
+        PayloadBuilderError::other(std::io::Error::other("cumulative gas used overflow"))
+    })
+}
+
 /// True when an EVM rejection is a blocklist hit. A blocklisted address can never produce an
 /// includable tx until it is unblocklisted, so such a tx is permanently un-includable.
 fn is_blocked_address_error(err: Option<&InvalidTransaction>) -> bool {
@@ -761,11 +783,11 @@ where
         }
 
         // ensure we still have capacity for this transaction
-        if block_gas_limit
-            < cumulative_gas_used
-                .checked_add(pool_tx.gas_limit())
-                .expect("total gas shouldn't overflow")
-        {
+        if !fits_within_block_gas_limit(
+            cumulative_gas_used,
+            pool_tx.gas_limit(),
+            block_gas_limit,
+        ) {
             // we can't fit this transaction into the block, so we need to mark it as invalid
             // which also removes all dependent transaction from the iterator before we can
             // continue
@@ -871,9 +893,7 @@ where
         {
             total_fees += proposer_revenue(tx.inner(), gas_used, base_fee);
         }
-        cumulative_gas_used = cumulative_gas_used
-            .checked_add(gas_used)
-            .expect("total gas shouldn't overflow");
+        cumulative_gas_used = checked_cumulative_gas_used(cumulative_gas_used, gas_used)?;
     }
 
     PayloadBuildMetrics::record_stage_tx_execution(loop_started.elapsed());
@@ -972,6 +992,19 @@ mod tests {
         // Equal to or below the block limit: fits a fresh block, only temporarily skipped.
         assert!(!exceeds_block_gas_limit_permanently(30000000, 30000000));
         assert!(!exceeds_block_gas_limit_permanently(21000, 30000000));
+    }
+
+    #[test]
+    fn fits_within_block_gas_limit_rejects_overflow_without_panicking() {
+        assert!(fits_within_block_gas_limit(20_000, 10_000, 30_000));
+        assert!(!fits_within_block_gas_limit(20_001, 10_000, 30_000));
+        assert!(!fits_within_block_gas_limit(u64::MAX, 1, u64::MAX));
+    }
+
+    #[test]
+    fn checked_cumulative_gas_used_returns_error_on_overflow() {
+        assert_eq!(checked_cumulative_gas_used(20_000, 10_000).unwrap(), 30_000);
+        assert!(checked_cumulative_gas_used(u64::MAX, 1).is_err());
     }
 
     #[test]
